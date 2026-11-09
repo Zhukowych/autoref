@@ -1,0 +1,69 @@
+# autoref topic config — edit queries, categories and relation labels for your topic.
+name: __TOPIC__
+db: data/__TOPIC__.sqlite
+vault: vault/__TOPIC__
+
+sources: [semantic_scholar, openalex, arxiv]
+source_settings:
+  semantic_scholar_api_key: ${S2_API_KEY:-}
+  openalex_mailto: ${OPENALEX_MAILTO:-}
+
+search:
+  queries:
+    - your first query
+    - your second query
+  year_from: 2015
+  limit_per_query: 100
+  filter:
+    mode: keywords
+    keywords_needed: 1
+    min_relevance: 0.5
+    keywords: [keyword1, keyword2]
+    topic_description: One paragraph describing the research topic (used by the LLM relevance filter).
+
+snowball:
+  depth: 1
+  direction: references
+  max_per_paper: 30
+
+llm:
+  default:
+    provider: openai_compat          # openai_compat | anthropic | ollama
+    base_url: http://localhost:11434/v1
+    model: qwen2.5:14b
+
+categorize:
+  mode: multi
+  min_confidence: 0.4
+  categories:
+    - id: methods
+      label: Methods
+      description: Papers proposing a new method.
+      subcategories:
+        - id: methods_learning
+          label: Learning-based methods
+          description: Methods based on machine learning.
+    - id: datasets
+      label: Datasets & benchmarks
+      description: Papers introducing datasets or benchmarks.
+    - id: survey
+      label: Survey / review
+      description: Survey or review articles.
+
+relations:
+  labels:
+    - relation_label: uses_component
+      label: Uses component
+      description: Citing paper reuses a concrete part (network, module, loss, code, weights) of the cited paper.
+    - relation_label: builds_on_idea
+      label: Builds on idea
+      description: Citing paper adapts or extends the cited paper's idea with its own implementation.
+    - relation_label: compares_against
+      label: Compares against
+      description: Cited paper is a baseline in experiments.
+    - relation_label: dataset_or_benchmark
+      label: Uses dataset/benchmark
+      description: Citing paper uses a dataset or evaluation protocol from the cited paper.
+    - relation_label: background
+      label: Background mention
+      description: Cited only as related work or an example.

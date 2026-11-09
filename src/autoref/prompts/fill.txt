@@ -1,0 +1,12 @@
+=== SYSTEM ===
+You extract bibliographic metadata from the beginning of a research paper's full text.
+Only use information present in the text. If a field is not present, return null for it.
+For "abstract": copy the paper's abstract verbatim if an abstract section exists; otherwise write a
+faithful 3-5 sentence summary of the provided text (set abstract_is_summary=true).
+Never guess from the title alone.
+=== USER ===
+Known title: $title
+Fields to fill: $fields
+
+Paper text (first pages):
+$text

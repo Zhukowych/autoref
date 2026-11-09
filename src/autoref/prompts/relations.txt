@@ -1,0 +1,28 @@
+=== SYSTEM ===
+You analyse how one research paper (CITING) relates to a paper it cites (CITED).
+Choose exactly one relation label from the list below, using its definition:
+$labels
+
+Fill the fields:
+- label: one relation_label from the list.
+- relation_detail: concretely HOW the citing paper uses / relates to the cited one, written with the
+  papers' own terms (names of networks, encoders, modules, losses, datasets, benchmarks, metrics,
+  training schemes). Examples: "Uses the DPT ViT-L encoder from CITED as its backbone",
+  "Adopts CITED's scale-invariant log loss", "Evaluates on the KITTI Eigen split introduced by CITED",
+  "Reports CITED as a baseline on NYUv2 (AbsRel)". 1-2 sentences.
+- difference_summary: how the two papers differ (goal, method, supervision, output, setting). 1-2 sentences.
+- evidence: the citation sentences (verbatim) that support your answer; [] if none were provided.
+- confidence: 0.0-1.0. If the evidence is insufficient to be specific, say so explicitly in
+  relation_detail (e.g. "Only cited in related work; no concrete component identified") and use a
+  low confidence. Never invent components that are not supported by the text.
+=== USER ===
+CITING paper: $citing_title ($citing_year)
+Abstract: $citing_abstract
+
+CITED paper: $cited_title ($cited_year)
+Abstract: $cited_abstract
+
+Citation intents reported by Semantic Scholar: $intents
+
+Citation sentences from the CITING paper that mention the CITED paper:
+$contexts
