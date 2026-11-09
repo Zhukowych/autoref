@@ -39,7 +39,8 @@ No linter/formatter configured. `AUTOREF_CONFIG` env var replaces `-c`.
   Rows stamped with a different scheme are "stale" and reprocessed on next run. Changing the hashed inputs
   therefore triggers recategorization/relabeling of everything.
 - **Sources (`sources/`)**: subclass `PaperSource`; declare `capabilities` (search, get, references, citations,
-  contexts, …), return source-agnostic `PaperRecord`/`ReferenceRecord` (`models.py`); register in
+  contexts, …); results are paged lazily via `search_pages` (`search` wraps it); OpenAlex needs an API key for
+  cursor paging (page=N fallback) and reports a credit budget; return source-agnostic `PaperRecord`/`ReferenceRecord` (`models.py`); register in
   `sources/registry.py`. Base class (`_get`) handles politeness delay (adaptive: doubles after 429, decays on success) and its own retry loop (exponential backoff + jitter, honors `Retry-After`); `SourceSet` disables a source after
   repeated failures (circuit breaker).
 - **LLMs (`llm/`)**: subclass `LLMClient`, implement only `_chat(system, user, *, json_schema=None)`, register in
@@ -54,6 +55,9 @@ No linter/formatter configured. `AUTOREF_CONFIG` env var replaces `-c`.
   changes.
 - **Enrichment rule**: LLM may fill fields only from fetched text (PDF/abstract), never invent from a title;
   LLM-filled fields are flagged with provenance.
+- **Paper map plugin (`obsidian/plugin/`)**: plain-JS Obsidian plugin (no build step), shipped as package data and
+  copied into `<vault>/.obsidian/plugins/autoref-graph/` by the exporter. It reads `.autoref/graph.json`
+  (`VaultExporter.write_graph`); keep that schema and `main.js` in sync. Syntax check: `node --check`.
 - **Obsidian export (`obsidian/export.py`)**: rewrites only changed notes; content below `NOTES_MARKER` under
   `## Notes` is user-owned and must be preserved (legacy `liblib:` marker also recognized).
 

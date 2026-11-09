@@ -48,6 +48,9 @@ class LLMConfig(BaseModel):
     timeout: float = 120.0
     json_mode: bool = True  # use provider-native JSON mode when available
     max_retries: int = 2
+    # openai_compat only: extra request fields the server understands, e.g. for vLLM + Qwen3
+    # {chat_template_kwargs: {enable_thinking: false}}
+    extra_body: dict | None = None
 
 
 class LLMSection(BaseModel):
@@ -70,12 +73,32 @@ class FilterConfig(BaseModel):
     topic_description: str = ""
 
 
+class StopConfig(BaseModel):
+    """Stop rule for `limit_per_query: all` (explore results until they stop being relevant).
+    Relevance of a result = it passes the `filter.keywords` test."""
+    min_yield: float = Field(0.2, ge=0, le=1)  # a page with a smaller share of relevant results is "low yield"
+    patience: int = Field(2, ge=1)             # stop after this many low-yield pages in a row
+    page_size: int = Field(50, ge=1)           # results per request while exploring (smaller = finer stop)
+    max_results: int = Field(2000, ge=1)       # hard cap per query and source
+
+
 class SearchConfig(BaseModel):
     queries: list[str]
     year_from: int | None = None
     year_to: int | None = None
-    limit_per_query: int = 100
+    # A number caps the results per query and source. `all` (or null) pages through the results until
+    # they stop being relevant (see `stop`) instead of using a fixed count.
+    limit_per_query: int | None = 100
+    # Overall cap on distinct papers gathered by one `search`/`update` run, across all queries and
+    # sources (each query/source pair gets a fair share of what is left). null = no cap.
+    total: int | None = Field(None, ge=1)
+    stop: StopConfig = Field(default_factory=StopConfig)
     filter: FilterConfig = Field(default_factory=FilterConfig)
+
+    @field_validator("limit_per_query", mode="before")
+    @classmethod
+    def _all_means_unlimited(cls, v):
+        return None if isinstance(v, str) and v.strip().lower() in ("all", "unlimited", "none", "") else v
 
 
 class SnowballConfig(BaseModel):

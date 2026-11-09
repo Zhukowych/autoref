@@ -27,6 +27,8 @@ class OpenAICompatClient(LLMClient):
             temperature=self.cfg.temperature,
             max_tokens=self.cfg.max_tokens,
         )
+        if self.cfg.extra_body:
+            kwargs["extra_body"] = self.cfg.extra_body
         if json_schema is not None and self._json_supported:
             kwargs["response_format"] = {"type": "json_object"}
         try:

@@ -51,6 +51,14 @@ def parse_feed(text: str) -> list[PaperRecord]:
     return out
 
 
+def feed_total(text: str, default: int | None = None) -> int | None:
+    """Total number of matches reported by the Atom feed (opensearch:totalResults)."""
+    try:
+        return int(feedparser.parse(text).feed.get("opensearch_totalresults"))
+    except (TypeError, ValueError):
+        return default
+
+
 class ArxivSource(PaperSource):
     name = "arxiv"
     capabilities = frozenset({"search", "get", "abstract", "pdf", "date_window"})
@@ -63,25 +71,27 @@ class ArxivSource(PaperSource):
         super().__init__(settings, client)
         self.categories = list(getattr(settings, "categories", None) or self.default_categories)
 
-    def search(self, query, limit=100, year_from=None, year_to=None, date_from=None, date_to=None):
+    def search_pages(self, query, page_size=100, max_results=None, *, year_from=None, year_to=None,
+                     date_from=None, date_to=None):
         q = build_query(query, self.categories)
         if date_from or date_to or year_from or year_to:
             lo = (date_from.strftime("%Y%m%d") if date_from else f"{year_from or 1991}0101") + "0000"
             hi = (date_to.strftime("%Y%m%d") if date_to else f"{year_to or 2100}1231") + "2359"
             q = f"({q}) AND submittedDate:[{lo} TO {hi}]"
-        out: list[PaperRecord] = []
-        start = 0
-        while len(out) < limit:
-            page = min(100, limit - len(out))
+        got = start = 0
+        while max_results is None or got < max_results:
+            page = min(page_size, 100, (max_results - got) if max_results is not None else 100)
             r = self._get(API, {"search_query": q, "start": start, "max_results": page,
                                 "sortBy": "submittedDate" if date_from else "relevance",
                                 "sortOrder": "descending"})
             batch = parse_feed(r.text)
-            out.extend(batch)
+            self.last_total = feed_total(r.text, self.last_total)
+            got += len(batch)
+            if batch:
+                yield batch
             if len(batch) < page:
                 break
             start += page
-        return out[:limit]
 
     def get(self, ids, title=None):
         if ids.arxiv_id:

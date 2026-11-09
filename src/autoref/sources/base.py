@@ -5,7 +5,8 @@ import logging
 import random
 import threading
 import time
-from abc import ABC, abstractmethod
+from abc import ABC
+from collections.abc import Iterator
 from datetime import date, datetime, timezone
 from email.utils import parsedate_to_datetime
 
@@ -83,11 +84,38 @@ class PaperSource(ABC):
         self._uniform = random.uniform
 
     # ---------------------------------------------------------------- interface
-    @abstractmethod
+    last_total: int | None = None  # total matches the source reported for the latest search (if known)
+    stop_reason: str | None = None  # set by a source that ended a search early (e.g. daily budget used up)
+
+    @property
+    def budget_info(self) -> str | None:
+        """Human-readable remaining quota, for sources that report one."""
+        return None
+
+    def search_pages(self, query: str, page_size: int = 100, max_results: int | None = None, *,
+                     year_from: int | None = None, year_to: int | None = None,
+                     date_from: date | None = None, date_to: date | None = None
+                     ) -> Iterator[list[PaperRecord]]:
+        """Yield result pages (best match first) until the results or `max_results` run out
+        (`None` = until exhausted). Sources override this to paginate lazily so that callers can
+        stop early; the default wraps a plain `search`. Sets `self.last_total` when the API reports it."""
+        if type(self).search is PaperSource.search:
+            raise NotImplementedError(f"{type(self).__name__} must implement search() or search_pages()")
+        yield self.search(query, limit=max_results or page_size, year_from=year_from, year_to=year_to,
+                          date_from=date_from, date_to=date_to)
+
     def search(self, query: str, limit: int = 100, year_from: int | None = None,
                year_to: int | None = None, date_from: date | None = None,
                date_to: date | None = None) -> list[PaperRecord]:
-        """Keyword search. `date_from/date_to` restrict by publication/submission date."""
+        """Keyword search returning at most `limit` records. `date_from/date_to` restrict by
+        publication/submission date."""
+        if type(self).search_pages is PaperSource.search_pages:
+            raise NotImplementedError(f"{type(self).__name__} must implement search() or search_pages()")
+        out: list[PaperRecord] = []
+        for page in self.search_pages(query, page_size=100, max_results=limit, year_from=year_from,
+                                      year_to=year_to, date_from=date_from, date_to=date_to):
+            out.extend(page)
+        return out[:limit]
 
     def get(self, ids: ExternalIds, title: str | None = None) -> PaperRecord | None:
         return None

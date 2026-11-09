@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import shutil
 from collections import defaultdict
 from datetime import timedelta
 from pathlib import Path
@@ -20,6 +21,9 @@ LEGACY_NOTES_MARKER = "<!-- liblib:notes — everything below this line is yours
 NOTES_MARKER = "<!-- autoref:notes — everything below this line is yours and is kept on re-export -->"
 PAPERS_DIR = "Papers"
 CATS_DIR = "Categories"
+GRAPH_FILE = ".autoref/graph.json"          # read by the bundled "autoref paper map" plugin
+PLUGIN_ID = "autoref-graph"
+PLUGIN_SRC = Path(__file__).parent / "plugin"
 
 
 def safe_name(text: str, maxlen: int = 90) -> str:
@@ -113,6 +117,8 @@ class VaultExporter:
             stats["categories"] = self.write_categories(s, tps, names, cats)
             self.write_index(s, tps, names, cats, rels_out)
             self.write_inbox(s, tps, names, new_since)
+            self.write_graph(s, tps, names, cats, rels_out, new_since)
+            stats["plugin"] = self.install_plugin()
             for cat_id in (canvas or []) + list(self.cfg.export.canvas_categories):
                 self.write_canvas(s, cat_id, names, cats, rels_out)
                 stats["canvas"] += 1
@@ -259,6 +265,62 @@ class VaultExporter:
                  "WHERE contains(tags, \"status/new\")", "SORT added DESC", "```", "", "## Static list", ""]
         lines += [f"- {tp.added_at:%Y-%m-%d} [[{names[tp.paper_id]}]] ({tp.origin})" for tp in new]
         (self.vault / "Inbox.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    # ---------------------------------------------------------------- graph data + plugin
+    def write_graph(self, s, tps, names, cats, rels_out, new_since) -> None:
+        """Data for the paper-map plugin: category tree, one primary category per paper, relations
+        with the full LLM analysis."""
+        cc = self.cfg.categorize
+        tree = []
+        for path, c in iter_categories(cc.categories):
+            parts = path.split("/")
+            tree.append({"id": c.id, "label": c.label, "description": _one_line(c.description),
+                         "parent": parts[-2] if len(parts) > 1 else None, "top": parts[0], "depth": len(parts) - 1})
+        depth = {c["id"]: c["depth"] for c in tree}
+        inbound = defaultdict(int)
+        for rs in rels_out.values():
+            for r in rs:
+                inbound[r.cited_id] += 1
+        papers = []
+        for tp in tps:
+            p = s.get(Paper, tp.paper_id)
+            mine = sorted(cats.get(p.id, []), key=lambda c: (-(c.confidence or 0), -depth.get(c.category_id, 0)))
+            papers.append({
+                "id": p.id, "note": f"{PAPERS_DIR}/{names[p.id]}.md", "name": names[p.id], "title": p.title,
+                "year": p.year, "venue": p.venue, "url": p.url, "authors": p.author_names[:4],
+                "n_authors": len(p.author_names), "citations": p.citation_count, "relevance": tp.relevance,
+                "primary": mine[0].category_id if mine else None,
+                "categories": [{"id": c.category_id, "confidence": c.confidence} for c in mine],
+                "rationale": _one_line(mine[0].rationale) if mine else None,
+                "inbound": inbound.get(p.id, 0), "new": tp.added_at >= new_since,
+                "abstract": _one_line(p.abstract)[:900] or None,
+            })
+        relations = [{
+            "id": r.id, "source": r.citing_id, "target": r.cited_id, "label": r.label,
+            "detail": _one_line(r.relation_detail), "difference": _one_line(r.difference_summary),
+            "evidence": [_one_line(e) for e in (r.evidence or [])[:4]], "confidence": r.confidence, "model": r.model,
+        } for rs in rels_out.values() for r in rs]
+        data = {"topic": self.cfg.name, "generated": utcnow().isoformat(timespec="seconds"),
+                "categories": tree,
+                "relation_labels": [{"id": l.relation_label, "label": l.label, "description": _one_line(l.description)}
+                                    for l in self.cfg.relations.labels],
+                "papers": papers, "relations": relations}
+        path = self.vault / GRAPH_FILE
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(data, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+
+    def install_plugin(self) -> str:
+        """Copy the bundled plugin into <vault>/.obsidian/plugins/. Enabling it stays the user's choice."""
+        if not PLUGIN_SRC.is_dir():
+            return "missing"
+        dest = self.vault / ".obsidian" / "plugins" / PLUGIN_ID
+        dest.mkdir(parents=True, exist_ok=True)
+        changed = False
+        for f in PLUGIN_SRC.iterdir():
+            if f.is_file() and (not (dest / f.name).exists() or (dest / f.name).read_bytes() != f.read_bytes()):
+                shutil.copyfile(f, dest / f.name)
+                changed = True
+        return "updated" if changed else "ok"
 
     # ---------------------------------------------------------------- canvas
     def write_canvas(self, s, cat_id: str, names, cats, rels_out):

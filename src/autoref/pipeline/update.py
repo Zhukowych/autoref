@@ -117,7 +117,8 @@ def process_new(ctx: Ctx, new_ids: set[int], run_id: int | None) -> dict:
     return out
 
 
-def run_update(ctx: Ctx, *, since: date | None = None, export: bool = True, restart: bool = False) -> dict:
+def run_update(ctx: Ctx, *, since: date | None = None, export: bool = True, restart: bool = False,
+               total: int | None = None) -> dict:
     with topic_lock(ctx):
         lo, hi = compute_window(ctx, since)
         done = resume_point(ctx, "update", window_to=hi) if since is None and not restart else []
@@ -126,7 +127,7 @@ def run_update(ctx: Ctx, *, since: date | None = None, export: bool = True, rest
             ctx.console.print(f"[bold]update window[/] {lo} → {hi}"
                               + (f" (resuming, {len(done)} queries already done)" if done else ""))
             stats = run_search(ctx, date_from=lo, date_to=hi, origin="update", run_id=run_id,
-                               skip={tuple(x) for x in done})
+                               skip={tuple(x) for x in done}, total=total)
             new_ids = set(stats.new_paper_ids)
             n_cit = 0
             if ctx.cfg.update.track_citations_of_core:
@@ -158,7 +159,7 @@ def run_update(ctx: Ctx, *, since: date | None = None, export: bool = True, rest
             raise
 
 
-def run_all(ctx: Ctx, *, export: bool = True, restart: bool = False) -> dict:
+def run_all(ctx: Ctx, *, export: bool = True, restart: bool = False, total: int | None = None) -> dict:
     """Full pipeline: search → filter → snowball → enrich → categorize → relate → export."""
     with topic_lock(ctx):
         done = [] if restart else resume_point(ctx, "search")
@@ -167,7 +168,7 @@ def run_all(ctx: Ctx, *, export: bool = True, restart: bool = False) -> dict:
             out: dict = {}
             if done:
                 ctx.console.print(f"[bold]resuming[/]: {len(done)} source/query pairs already done")
-            st = run_search(ctx, run_id=run_id, skip={tuple(x) for x in done})
+            st = run_search(ctx, run_id=run_id, skip={tuple(x) for x in done}, total=total)
             out["search"] = {"rows": st.rows, "new": len(st.new_paper_ids), "errors": st.errors}
             out["filter"] = apply_filter(ctx)
             out["snowball"] = run_snowball(ctx)

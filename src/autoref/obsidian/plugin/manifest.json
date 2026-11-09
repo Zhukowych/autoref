@@ -1,0 +1,9 @@
+{
+  "id": "autoref-graph",
+  "name": "Autoref paper map",
+  "version": "0.1.2",
+  "minAppVersion": "1.4.0",
+  "description": "Papers clustered in category halos; click a relation to read the LLM's analysis. Reads .autoref/graph.json written by `autoref export obsidian`.",
+  "author": "autoref",
+  "isDesktopOnly": false
+}

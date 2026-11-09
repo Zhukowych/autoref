@@ -30,7 +30,7 @@ autoref = "autoref.cli:entry"
 where = ["src"]
 
 [tool.setuptools.package-data]
-autoref = ["prompts/*.txt", "templates/*.yaml"]
+autoref = ["prompts/*.txt", "templates/*.yaml", "obsidian/plugin/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

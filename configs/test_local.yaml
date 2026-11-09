@@ -1,20 +1,29 @@
-# Small local test: OpenAlex + arXiv, local Ollama model, ~30 papers.
+# Small local test: S2 + OpenAlex + arXiv, local Ollama model, ~45 papers.
 name: test_local
 db: data/test_local.sqlite
 vault: vault/test_local
-# no Semantic Scholar here: works without an API key
 sources:
+  semantic_scholar:
+    api_key: ${S2_API_KEY:-}
+    max_rate: 0.5
   openalex:
     mailto: ${OPENALEX_MAILTO:-}
+    api_key: ${OPENALEX_API_KEY:-}
     max_rate: 6
   arxiv:
-    max_rate: 0.32
+    max_rate: 0.25
 search:
   queries:
   - self-supervised monocular depth estimation
   - monocular depth estimation UAV
   year_from: 2014
-  limit_per_query: 15
+  limit_per_query: all      # explore until results stop being relevant, but stay small for a quick test
+  total: 60                 # stop after 60 distinct papers in a run (fair share per query/source), keeps reruns short
+  stop:
+    min_yield: 0.3
+    patience: 2
+    page_size: 20
+    max_results: 60
   filter:
     mode: keywords
     keywords_needed: 2

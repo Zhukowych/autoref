@@ -32,6 +32,8 @@ console = Console()
 ConfigOpt = Annotated[Path, typer.Option("--config", "-c", envvar="AUTOREF_CONFIG", exists=True, dir_okay=False,
                                          help="Topic config YAML (or env AUTOREF_CONFIG).")]
 DryRun = Annotated[bool, typer.Option("--dry-run", help="Do everything but do not commit DB changes.")]
+Total = Annotated[Optional[int], typer.Option("--total", min=1, help="Stop after this many distinct papers "
+                                              "were gathered in this run (overrides search.total).")]
 Restart = Annotated[bool, typer.Option("--restart", help="Ignore checkpoints of an interrupted run; search everything again.")]
 
 
@@ -58,10 +60,12 @@ def _dict_table(title: str, d: dict) -> Table:
 
 def _search_table(rows: list[dict]) -> Table:
     t = Table(title="search results")
-    for col in ("source", "query", "found", "new", "merged", "error"):
+    for col in ("source", "query", "found", "new", "merged", "total", "note"):
         t.add_column(col)
     for r in rows:
-        t.add_row(r["source"], r["query"], str(r["found"]), str(r["new"]), str(r["merged"]), r.get("error", ""))
+        total = r.get("total")
+        t.add_row(r["source"], r["query"], str(r["found"]), str(r["new"]), str(r["merged"]),
+                  f"{total:,}" if isinstance(total, int) else "", r.get("error") or r.get("note", ""))
     return t
 
 
@@ -131,11 +135,11 @@ def sources_test(config: ConfigOpt, query: str = "monocular depth estimation"):
     cfg = load_config(config)
     from .sources import SourceSet
     t = Table(title="sources (priority order)")
-    for col in ("source", "capabilities", "key/e-mail", "max rate", "result", "time"):
+    for col in ("source", "capabilities", "key/e-mail", "max rate", "budget", "result", "time"):
         t.add_column(col)
     for src in SourceSet(cfg.sources):
         sc = cfg.sources[src.name]
-        key = {"semantic_scholar": bool(sc.api_key), "openalex": bool(sc.mailto)}.get(src.name)
+        key = {"semantic_scholar": bool(sc.api_key), "openalex": bool(sc.api_key)}.get(src.name)
         t0 = time.time()
         try:
             res = src.search(query, limit=3)
@@ -143,7 +147,7 @@ def sources_test(config: ConfigOpt, query: str = "monocular depth estimation"):
         except Exception as e:
             r = f"[red]{type(e).__name__}: {str(e)[:60]}[/]"
         t.add_row(src.name, ", ".join(sorted(src.capabilities)), "n/a" if key is None else ("yes" if key else "no"),
-                  f"{1 / src.min_delay:.2f}/s", r, f"{time.time() - t0:.1f}s")
+                  f"{1 / src.min_delay:.2f}/s", src.budget_info or "", r, f"{time.time() - t0:.1f}s")
     console.print(t)
 
 
@@ -152,9 +156,11 @@ def sources_test(config: ConfigOpt, query: str = "monocular depth estimation"):
 def search(config: ConfigOpt,
            source: Annotated[Optional[str], typer.Option(help="Only this source.")] = None,
            query: Annotated[Optional[list[str]], typer.Option(help="Override config queries (repeatable).")] = None,
-           limit: Annotated[Optional[int], typer.Option(help="Results per query.")] = None,
+           limit: Annotated[Optional[int], typer.Option(help="Max results per query and source.")] = None,
+           all_results: Annotated[bool, typer.Option("--all", help="Page until results stop being relevant "
+                                                     "(search.stop) instead of a fixed limit.")] = False,
            no_filter: Annotated[bool, typer.Option("--no-filter", help="Skip relevance gate.")] = False,
-           restart: Restart = False, dry_run: DryRun = False):
+           total: Total = None, restart: Restart = False, dry_run: DryRun = False):
     """Run config queries on sources, dedup/merge into DB, then apply the relevance gate."""
     from .pipeline.search import apply_filter, run_search
     from .pipeline.update import finish_run, resume_point, start_run
@@ -165,13 +171,14 @@ def search(config: ConfigOpt,
     if done:
         console.print(f"[bold]resuming[/]: {len(done)} source/query pairs already done")
     try:
-        st = run_search(ctx, source=source, queries=query, limit=limit, run_id=run_id,
+        st = run_search(ctx, source=source, queries=query, limit=limit, exhaustive=all_results, total=total, run_id=run_id,
                         skip={tuple(x) for x in done})
     except BaseException as e:
         if run_id:
             finish_run(ctx, run_id, status="failed", error=str(e))
         raise
     console.print(_search_table(st.rows))
+    console.print(f"gathered [bold]{st.gathered}[/] distinct papers")
     if run_id:
         finish_run(ctx, run_id, status="partial" if st.errors else "ok", n_new=len(st.new_paper_ids))
     if not no_filter:
@@ -266,11 +273,11 @@ def export_obsidian(config: ConfigOpt,
 
 @app.command()
 def run(config: ConfigOpt, no_export: Annotated[bool, typer.Option("--no-export")] = False,
-        restart: Restart = False):
+        total: Total = None, restart: Restart = False):
     """Full pipeline: search → filter → snowball → enrich → categorize → relate → export. Resumable."""
     from .pipeline.update import run_all
     ctx = _ctx(config)
-    out = run_all(ctx, export=not no_export, restart=restart)
+    out = run_all(ctx, export=not no_export, restart=restart, total=total)
     console.print(_search_table(out.pop("search")["rows"]))
     for k, v in out.items():
         console.print(_dict_table(k, v))
@@ -281,13 +288,14 @@ def run(config: ConfigOpt, no_export: Annotated[bool, typer.Option("--no-export"
 @app.command()
 def update(config: ConfigOpt,
            since: Annotated[Optional[str], typer.Option(help="YYYY-MM-DD; default = last successful run - overlap")] = None,
-           no_export: Annotated[bool, typer.Option("--no-export")] = False, restart: Restart = False):
+           no_export: Annotated[bool, typer.Option("--no-export")] = False, total: Total = None,
+           restart: Restart = False):
     """Incremental: fetch papers published since the last run (+ new citations of core papers)."""
     from .pipeline.update import LockedError, run_update
     ctx = _ctx(config)
     try:
         out = run_update(ctx, since=date.fromisoformat(since) if since else None, export=not no_export,
-                         restart=restart)
+                         restart=restart, total=total)
     except LockedError as e:
         console.print(f"[yellow]{e}[/]")
         raise typer.Exit(2)

@@ -72,27 +72,33 @@ class SemanticScholarSource(PaperSource):
         if key and not getattr(settings, "max_rate", None):
             self.min_delay = self._delay = 1.0
 
-    def search(self, query, limit=100, year_from=None, year_to=None, date_from=None, date_to=None):
+    SEARCH_CAP = 1000  # the relevance search endpoint cannot page beyond offset+limit = 1000
+
+    def search_pages(self, query, page_size=100, max_results=None, *, year_from=None, year_to=None,
+                     date_from=None, date_to=None):
         params: dict = {"query": query, "fields": PAPER_FIELDS}
         if date_from or date_to:
             params["publicationDateOrYear"] = (
                 f"{date_from.isoformat() if date_from else ''}:{date_to.isoformat() if date_to else ''}")
         elif year_from or year_to:
             params["year"] = f"{year_from or ''}-{year_to or ''}"
-        out: list[PaperRecord] = []
-        offset = 0
-        while len(out) < limit and offset < 1000:
-            page = min(100, limit - len(out))
+        cap = min(max_results or self.SEARCH_CAP, self.SEARCH_CAP)
+        got = offset = 0
+        while got < cap and offset < self.SEARCH_CAP:
+            page = min(page_size, 100, cap - got, self.SEARCH_CAP - offset)
             r = self._get(f"{API}/paper/search", {**params, "offset": offset, "limit": page}, self._headers)
             if r.status_code == 404:
                 break
             data = r.json()
+            self.last_total = data.get("total", self.last_total)
             items = data.get("data") or []
-            out.extend(p for p in (parse_paper(i) for i in items) if p)
+            got += len(items)
+            recs = [p for p in (parse_paper(i) for i in items) if p]
+            if recs:
+                yield recs
             if "next" not in data or not items:
                 break
             offset = data["next"]
-        return out[:limit]
 
     def get(self, ids, title=None):
         pid = _s2_id_param(ids)

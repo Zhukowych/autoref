@@ -1,0 +1,280 @@
+# autoref topic config — Metric dense mapping from UAV with depth foundation models + onboard sensors
+#
+# Thesis framing (from "Dense Monocular Mapping from UAV"): depth/geometry foundation models (DA3, MoGe-2,
+# UniDepthV2, ...) get relative shape right but metric scale wrong from the air:
+#   1. scale collapse — error grows with range, distant geometry is shrunk; one global scale can't fix it
+#   2. viewpoint bias  — models assume ground-level, level cameras; altitude / pitch / roll hurt
+#   3. IMU-only scale is unobservable without enough translational acceleration (survey flight, hover)
+#   4. benchmarks report one number per scene; no error-vs-range / altitude / pitch breakdown
+# Fix without retraining: anchor/correct depth with IMU attitude, barometric height (flat-ground prior),
+# VIO points, multi-view inference and temporal filtering; then fuse into a map (any representation).
+#
+# Shares the DB with mde_uav_mapping, so papers already fetched there are reused (one DB, many topics).
+name: uav_metric_mapping
+db: data/mde_uav_mapping.sqlite
+vault: vault/uav_metric_mapping
+
+sources:
+  semantic_scholar:
+    api_key: ${S2_API_KEY:-}
+    max_rate: 0.5
+  openalex:
+    api_key: ${OPENALEX_API_KEY:-}
+    mailto: ${OPENALEX_MAILTO:-}
+    max_rate: 6
+  arxiv:
+    max_rate: 0.32
+    categories: [cs.CV, cs.RO, eess.IV]   # arXiv search restricted to vision / robotics / image processing
+
+search:
+  # Grouped by thesis question. Each query is explored until results stop being relevant (see `stop`).
+  queries:
+    # --- depth & geometry foundation models (what is being corrected)
+    - zero-shot metric monocular depth estimation
+    - monocular geometry foundation model point map metric scale
+    - feed-forward multi-view 3D reconstruction transformer camera pose depth
+    - affine-invariant relative depth foundation model
+    # --- failure modes (hypothesis: range part + viewpoint part)
+    - monocular depth estimation aerial viewpoint altitude pitch
+    - metric depth scale collapse far range distant scenes
+    - monocular depth estimation camera roll tilt robustness
+    - metric depth ambiguity camera intrinsics focal length generalization
+    - monocular depth uncertainty estimation confidence
+    # --- training-free metric scale recovery / anchoring
+    - scale recovery learned monocular depth sparse metric points
+    - monocular depth alignment visual-inertial odometry sparse depth
+    - depth completion sparse prior prompting depth foundation model
+    - test-time adaptation monocular depth metric scale
+    - ground plane camera height monocular scale recovery
+    - digital elevation model metric monocular depth UAV
+    - inertial cues 3D foundation model metric scale
+    - gravity direction IMU monocular depth estimation
+    # --- state estimation that supplies the anchors
+    - visual-inertial odometry scale observability degenerate motion
+    - barometer aided visual-inertial odometry UAV altitude
+    - dense SLAM learned depth prior foundation model
+    # --- temporal consistency
+    - temporally consistent video depth estimation scale drift
+    - recursive filtering depth scale online fusion
+    # --- mapping & representations
+    - UAV dense mapping monocular depth prediction
+    - TSDF volumetric fusion learned depth outdoor large scale
+    - 3D Gaussian splatting UAV aerial reconstruction
+    - digital surface model elevation map from UAV monocular images
+    - real-time onboard UAV 3D reconstruction
+    # --- data & evaluation
+    - UAV dataset metric depth ground truth LiDAR
+    - synthetic aerial dataset depth benchmark drone
+  year_from: 2016
+  limit_per_query: all
+  stop:
+    min_yield: 0.25
+    patience: 2
+    page_size: 100
+    max_results: 1000
+  filter:
+    # LLM screening: the topic is narrow and keyword hits like "depth" + "mapping" admit much noise
+    # (medical imaging, bathymetry, ...). Keywords below still drive the search stop rule.
+    mode: llm
+    min_relevance: 0.55
+    keywords_needed: 2
+    keywords: [monocular depth, metric depth, depth estimation, depth foundation, depth completion, sparse depth,
+               scale recovery, scale ambiguity, metric scale, uav, drone, aerial, altitude, oblique, nadir,
+               inertial, imu, barometer, visual odometry, visual-inertial, slam, gravity, ground plane,
+               elevation model, surface model, tsdf, voxel, point map, pointmap, gaussian splatting, nerf,
+               dense mapping, 3d reconstruction, multi-view, feed-forward, foundation model, uncertainty,
+               temporally consistent, video depth, photogrammetry, structure from motion]
+    topic_description: >
+      Bachelor thesis: metric dense 3D mapping from a single UAV camera. Depth/geometry foundation models
+      (Depth Anything 3, MoGe-2, UniDepth, Metric3D, VGGT, MapAnything) recover relative shape well but their
+      metric scale from the air is wrong: error grows with distance (scale collapse) and depends on altitude,
+      pitch and roll (viewpoint bias). The thesis corrects depth WITHOUT retraining, using onboard sensors —
+      IMU attitude (gravity, levelling the image), barometric height with a flat-ground prior, sparse points
+      from visual-inertial odometry, multi-view inference, and recursive temporal filtering — and fuses the
+      corrected depth into a map (point cloud, TSDF/voxel, elevation/DSM, Gaussian splatting).
+      Relevant: monocular/multi-view metric depth models and their failure analysis (range, viewpoint,
+      intrinsics); scale recovery and alignment of learned depth with sparse metric cues; depth completion /
+      prompting with sparse priors; ground-plane, camera-height or DEM anchors; IMU/gravity-aware depth;
+      VIO/SLAM scale observability, barometer fusion; SLAM with learned depth priors; temporally consistent
+      video depth; dense mapping representations; UAV/aerial depth datasets and evaluation protocols.
+      Not relevant: medical/underwater/bathymetric depth, stereo-only or LiDAR-only methods without a
+      monocular or mapping angle, pure object detection/tracking on UAV imagery, depth of field/focus.
+
+snowball:
+  depth: 1
+  direction: references        # citations of foundation models explode (thousands) — use `update` for new work
+  max_per_paper: 25
+
+llm:
+  # Local vLLM server (see README "Tutorial: run on a GPU server"). One model does every task:
+  # relevance, categorize, relations, fill. Override with env vars without editing this file.
+  default:
+    provider: openai_compat
+    base_url: ${AUTOREF_LLM_URL:-http://localhost:8002/v1}
+    model: ${AUTOREF_LLM_MODEL:-qwen3-14b}
+    max_tokens: 1024
+    timeout: 300
+    extra_body:                    # Qwen3: answer directly, no <think> block (faster, fits max_tokens)
+      chat_template_kwargs: {enable_thinking: false}
+  # Optional: send only relation labeling to Claude instead (needs ANTHROPIC_API_KEY):
+  # relations:
+  #   provider: anthropic
+  #   model: claude-sonnet-5-5
+  #   api_key: ${ANTHROPIC_API_KEY:-}
+  #   max_tokens: 1024
+
+categorize:
+  mode: multi
+  min_confidence: 0.4
+  scheme: thesis-v1            # bump to re-categorize everything after editing the tree
+  categories:
+    - id: depth_models
+      label: Depth & geometry models
+      description: Networks that predict depth / 3D geometry from images. Assign the most specific subcategory.
+      subcategories:
+        - id: mde_relative
+          label: Relative depth models
+          description: Single-image depth up to unknown scale/shift (affine-invariant), e.g. MiDaS, Depth Anything v1/v2, Marigold; diffusion or ViT based.
+        - id: mde_metric
+          label: Metric single-image models
+          description: Predict absolute metric depth or point maps from one image, e.g. ZoeDepth, Metric3D, UniDepth, Depth Pro, MoGe-2; camera-aware or canonical-camera designs.
+        - id: multiview_feedforward
+          label: Multi-view feed-forward reconstruction
+          description: Networks that take several images and output depth, point maps and/or camera poses in one pass, e.g. DUSt3R, MASt3R, VGGT, Depth Anything 3, MapAnything, pi3.
+        - id: mde_self_supervised
+          label: Self-supervised depth from video/stereo
+          description: Depth trained with photometric reconstruction from monocular video or stereo pairs (Monodepth2 family), incl. aerial self-supervised work.
+    - id: failure_analysis
+      label: Failure modes & error analysis
+      description: Papers that analyse WHERE and WHY learned depth fails, or study generalisation; core to the thesis diagnostics.
+      subcategories:
+        - id: range_error
+          label: Range-dependent error / scale collapse
+          description: Error that grows with distance, far-field shrinkage, long-range depth, error stratified by depth bins.
+        - id: viewpoint_bias
+          label: Viewpoint & camera bias
+          description: Sensitivity to altitude, pitch, roll, field of view or camera intrinsics; ground-level / horizontal priors in training data.
+        - id: uncertainty
+          label: Depth uncertainty & confidence
+          description: Estimating per-pixel uncertainty or confidence of predicted depth, calibration of that uncertainty.
+    - id: scale_recovery
+      label: Metric scale recovery & anchoring
+      description: Making learned depth metric WITHOUT retraining the base model, by using external measurements or geometric priors.
+      subcategories:
+        - id: sparse_alignment
+          label: Alignment to sparse metric points
+          description: Global or local scale/shift fitting of predicted depth to sparse metric depth (SfM/VIO/LiDAR points), robust or per-pixel alignment, e.g. VI-Depth.
+        - id: range_correction
+          label: Non-linear / range-dependent correction
+          description: Corrections beyond one global scale, d = f(d_hat) — piecewise, polynomial, learned or spatially varying scale maps.
+        - id: prior_conditioning
+          label: Depth completion & prior prompting
+          description: Feeding sparse/low-res metric priors into a depth model at inference, e.g. Prompt Depth Anything, Prior Depth Anything, Marigold-DC, OMNI-DC, test-time adaptation.
+        - id: geometric_anchors
+          label: Ground plane, height & terrain anchors
+          description: Metric scale from camera height above a ground plane, flat-ground assumptions, barometric altitude, DEM/DSM projection (e.g. TanDepth).
+        - id: inertial_gravity
+          label: IMU & gravity-aware depth
+          description: Using IMU/gravity to level images, condition depth networks or ground foundation models in metric scale (e.g. VI3, gravity rectifier).
+    - id: state_estimation
+      label: Odometry, SLAM & sensor fusion
+      description: Estimating camera pose/metric motion — the source of anchors for scale recovery.
+      subcategories:
+        - id: vio
+          label: Visual-inertial odometry
+          description: VIO/VINS/MSCKF systems, initialisation, scale observability and degenerate motions (constant velocity, hover).
+        - id: multisensor_fusion
+          label: Barometer / GNSS / multi-sensor fusion
+          description: Fusing barometer, GNSS, altimeter, magnetometer or other sensors with vision/IMU on aerial platforms.
+        - id: slam_learned_depth
+          label: SLAM with learned depth
+          description: SLAM/VO that uses learned depth or foundation-model priors, e.g. DROID-SLAM, MASt3R-SLAM, VGGT-SLAM, CNN-SLAM.
+    - id: temporal
+      label: Temporal consistency
+      description: Consistent depth/scale over video — video depth models, recursive (Kalman/Bayesian) scale filtering, online multi-frame fusion reducing jitter and drift.
+    - id: mapping
+      label: Dense mapping & representations
+      description: Turning (corrected) depth and poses into a map.
+      subcategories:
+        - id: volumetric
+          label: Volumetric (TSDF / voxel / occupancy)
+          description: TSDF, voxel, occupancy or ESDF maps (KinectFusion, Voxblox, nvblox, OctoMap) incl. fusion of learned depth.
+        - id: points_mesh
+          label: Point cloud, surfel & mesh
+          description: Point-cloud, surfel or mesh based dense reconstruction and depth-map fusion.
+        - id: neural_gaussian
+          label: NeRF & Gaussian splatting
+          description: Neural radiance fields, 3D/2D Gaussian splatting reconstructions and SLAM, incl. aerial/large-scale variants.
+        - id: elevation_ortho
+          label: Elevation maps, DSM & photogrammetry
+          description: 2.5D elevation / digital surface models, orthophotos, classical SfM-MVS photogrammetry from aerial images.
+    - id: uav
+      label: UAV / aerial
+      description: Work specifically on drones or aerial imagery. Combine with a method category.
+      subcategories:
+        - id: aerial_depth
+          label: Depth from aerial imagery
+          description: Monocular or multi-view depth estimation evaluated or adapted on UAV/aerial images (e.g. AerialMetric).
+        - id: uav_mapping_systems
+          label: UAV mapping systems
+          description: End-to-end or onboard UAV mapping/reconstruction pipelines and their engineering.
+    - id: benchmarks
+      label: Datasets, benchmarks & evaluation
+      description: Papers that introduce data or evaluation methodology.
+      subcategories:
+        - id: aerial_data
+          label: Aerial / UAV datasets
+          description: UAV or aerial datasets with depth, pose or 3D ground truth (real or synthetic), e.g. AerialMetric, UAVScenes, MidAir, TartanAir, WildUAV, UseGeo.
+        - id: eval_protocols
+          label: Depth evaluation protocols & metrics
+          description: General depth benchmarks, metrics and protocols (AbsRel, delta, scale-invariant errors, stratified/binned evaluation).
+    - id: survey
+      label: Surveys & reviews
+      description: Survey, review or tutorial papers on any of the above.
+
+relations:
+  scheme: thesis-v1
+  labels:
+    - relation_label: uses_model
+      label: Runs cited model
+      description: Citing paper runs the cited pretrained model, network or system as a component of its pipeline (e.g. uses Depth Anything V2 as depth backbone, VINS-Mono for poses, DUSt3R for initialisation). Name the component and its role.
+    - relation_label: extends_method
+      label: Extends method
+      description: Citing paper modifies, generalises or re-implements the cited method's core idea (new loss, head, conditioning, alignment scheme). State what is kept and what is changed.
+    - relation_label: fixes_limitation
+      label: Addresses a limitation
+      description: Citing paper explicitly targets a weakness, failure mode or assumption of the cited work (e.g. scale ambiguity, viewpoint bias, unobservable scale, drift) and proposes a remedy. Name the limitation and the remedy.
+    - relation_label: compares_against
+      label: Compared as baseline
+      description: Cited method is evaluated as a baseline or competitor in the citing paper's experiments. Mention the dataset/metric and who wins if stated.
+    - relation_label: alternative_approach
+      label: Alternative approach
+      description: Both papers solve the same sub-problem by different means, discussed but not run as a baseline (e.g. DEM anchoring vs. VIO-point alignment). Contrast the two approaches in one sentence.
+    - relation_label: uses_data_or_protocol
+      label: Uses dataset / metric
+      description: Citing paper uses a dataset, split, ground-truth pipeline, metric or evaluation protocol introduced by the cited paper.
+    - relation_label: theory_foundation
+      label: Theoretical foundation
+      description: Cited paper supplies theory or geometry the citing paper relies on — observability analysis, camera/projection model, filtering formulation, fusion math, loss derivation.
+    - relation_label: supports_or_contradicts
+      label: Confirms / contradicts findings
+      description: Citing paper's results confirm, reproduce or contradict an empirical claim of the cited paper (e.g. both observe accuracy drop with altitude). Say which claim and whether it agrees.
+    - relation_label: background
+      label: Background mention
+      description: Cited only as related work or an example; no technical dependency, comparison or finding involved.
+
+fill_missing:
+  enabled: true
+  allow_pdf: true
+  allow_llm: true
+  fields: [abstract, year, venue, authors]
+
+update:
+  overlap_days: 3
+  track_citations_of_core: true   # mark key papers with `autoref mark <id> --core` (DA3, MoGe-2, UniDepthV2, AerialMetric, VI3, VI-Depth, ...)
+  core_min_relevance: 0.9
+  default_since_days: 30
+
+export:
+  inbox_days: 14
+  canvas_categories: [scale_recovery]

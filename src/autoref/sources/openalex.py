@@ -70,27 +70,88 @@ class OpenAlexSource(PaperSource):
     def __init__(self, settings=None, client=None):
         super().__init__(settings, client)
         self._mailto = getattr(settings, "mailto", None) if settings else None
+        self._api_key = getattr(settings, "api_key", None) if settings else None
+        # credit budget as reported by the X-RateLimit-* response headers
+        self.credits_remaining: int | None = None
+        self.credits_limit: int | None = None
+        self.credits_reset: int | None = None   # seconds until the budget resets
+        self.credits_cost = 10                  # credits one list/search request costs
 
     def _params(self, **kw) -> dict:
         p = {k: v for k, v in kw.items() if v is not None}
         if self._mailto:
             p["mailto"] = self._mailto
+        if self._api_key:
+            p["api_key"] = self._api_key
         return p
 
-    def _paged(self, filt: str | None, search: str | None, limit: int) -> list[PaperRecord]:
-        out: list[PaperRecord] = []
-        cursor = "*"
-        while cursor and len(out) < limit:
+    def _get(self, url, params=None, headers=None):
+        r = super()._get(url, params, headers)
+        h = r.headers
+        try:
+            self.credits_remaining = int(h["x-ratelimit-remaining"])
+            self.credits_limit = int(h["x-ratelimit-limit"])
+            self.credits_reset = int(h["x-ratelimit-reset"])
+            self.credits_cost = int(h.get("x-ratelimit-credits-used", self.credits_cost)) or self.credits_cost
+        except (KeyError, ValueError):
+            pass
+        return r
+
+    @property
+    def budget_info(self):
+        if self.credits_remaining is None:
+            return None
+        reset = f", resets in {self.credits_reset // 3600}h" if self.credits_reset else ""
+        return f"{self.credits_remaining}/{self.credits_limit} credits{reset}"
+
+    def _budget_exhausted(self) -> bool:
+        if self.credits_remaining is not None and self.credits_remaining < self.credits_cost:
+            self.stop_reason = f"OpenAlex daily budget used up ({self.budget_info})"
+            return True
+        return False
+
+    PAGE_LIMIT = 10_000  # basic (page=N) paging cannot go past 10,000 results
+
+    def _pages(self, filt: str | None, search: str | None, page_size: int, max_results: int | None):
+        """Cursor paging needs an API key (OpenAlex answers 401 without one); without a key use
+        page=N paging, which is limited to the first 10,000 results."""
+        use_cursor = bool(self._api_key)
+        cap = max_results
+        if not use_cursor:
+            cap = min(max_results or self.PAGE_LIMIT, self.PAGE_LIMIT)
+        per = max(1, min(200, page_size, cap if cap is not None else page_size))  # constant: page=N offsets depend on it
+        got, cursor, page_no = 0, "*", 1
+        while cap is None or got < cap:
+            if self._budget_exhausted():
+                return
             r = self._get(f"{API}/works", self._params(
-                search=search, filter=filt, cursor=cursor, **{"per-page": min(200, max(1, limit - len(out)))}))
+                search=search, filter=filt, **{"per-page": per},
+                **({"cursor": cursor} if use_cursor else {"page": page_no})))
             if r.status_code == 404:
                 break
             data = r.json()
+            meta = data.get("meta") or {}
+            self.last_total = meta.get("count", self.last_total)
             results = data.get("results") or []
-            out.extend(p for p in (parse_work(w) for w in results) if p)
-            cursor = (data.get("meta") or {}).get("next_cursor")
-            if not results:
+            if cap is not None:
+                results = results[: cap - got]
+            got += len(results)
+            recs = [p for p in (parse_work(w) for w in results) if p]
+            if recs:
+                yield recs
+            if use_cursor:
+                cursor = meta.get("next_cursor")
+                if not cursor:
+                    break
+            else:
+                page_no += 1
+            if len(results) < per:
                 break
+
+    def _paged(self, filt: str | None, search: str | None, limit: int) -> list[PaperRecord]:
+        out: list[PaperRecord] = []
+        for page in self._pages(filt, search, 200, limit):
+            out.extend(page)
         return out[:limit]
 
     @staticmethod
@@ -106,9 +167,10 @@ class OpenAlexSource(PaperSource):
             f.append(f"to_publication_date:{year_to}-12-31")
         return f
 
-    def search(self, query, limit=100, year_from=None, year_to=None, date_from=None, date_to=None):
+    def search_pages(self, query, page_size=100, max_results=None, *, year_from=None, year_to=None,
+                     date_from=None, date_to=None):
         filt = self._date_filter(year_from, year_to, date_from, date_to)
-        return self._paged(",".join(filt) or None, query, limit)
+        yield from self._pages(",".join(filt) or None, query, page_size, max_results)
 
     def get(self, ids, title=None):
         key = None

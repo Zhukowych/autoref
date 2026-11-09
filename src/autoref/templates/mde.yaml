@@ -13,6 +13,9 @@ sources:
     api_key: ${S2_API_KEY:-}      # optional but strongly recommended (free on request)
     max_rate: 1.0                 # documented limit with a key: 1 request/second
   openalex:
+    # Free key from https://openalex.org/settings/api. Without one OpenAlex allows ~100 search pages/day
+    # (shared 0.10 USD budget per IP) and no cursor paging (page=N up to 10,000 results is used instead).
+    api_key: ${OPENALEX_API_KEY:-}
     mailto: ${OPENALEX_MAILTO:-}  # optional e-mail for OpenAlex's "polite pool"
     max_rate: 6                   # documented limit: 10 requests/second
   arxiv:
@@ -32,7 +35,13 @@ search:
     - UAV 3D reconstruction monocular camera
     - depth fusion TSDF learned depth
   year_from: 2014
-  limit_per_query: 200
+  limit_per_query: 200   # results per query and source; or `all` = keep paging until results stop being relevant
+  # total: 500            # optional: stop a run after this many distinct papers (shared fairly by all queries/sources)
+  stop:                     # only used with `all` (judged with filter.keywords below)
+    min_yield: 0.2          # a page with < 20% relevant results is "low yield" ...
+    patience: 2             # ... stop after this many low-yield pages in a row
+    page_size: 50           # results per request while exploring
+    max_results: 2000       # hard cap per query and source (S2 search itself stops at 1000)
   filter:
     mode: keywords            # none | keywords | llm
     keywords_needed: 2
