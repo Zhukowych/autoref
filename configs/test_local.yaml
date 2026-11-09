@@ -1,0 +1,141 @@
+# Small local test: OpenAlex + arXiv, local Ollama model, ~30 papers.
+name: test_local
+db: data/test_local.sqlite
+vault: vault/test_local
+sources:
+- openalex
+- arxiv
+source_settings:
+  openalex_mailto: ${OPENALEX_MAILTO:-}
+search:
+  queries:
+  - self-supervised monocular depth estimation
+  - monocular depth estimation UAV
+  year_from: 2014
+  limit_per_query: 15
+  filter:
+    mode: keywords
+    keywords_needed: 2
+    min_relevance: 0.5
+    keywords:
+    - depth
+    - monocular
+    - single image
+    - uav
+    - drone
+    - aerial
+    - mapping
+    - reconstruction
+    - slam
+    - odometry
+    - tsdf
+    - point cloud
+    - disparity
+    - stereo
+    - metric scale
+    topic_description: 'Mapping and 3D reconstruction from UAV/drone imagery using monocular (single-camera)
+      depth estimation networks combined with external odometry/pose (GNSS/IMU/VIO). Relevant: monocular
+      depth estimation methods (supervised, self-supervised, metric, foundation models), depth fusion/mapping
+      (TSDF, voxel, point cloud), monocular SLAM/VO with learned depth, aerial datasets.
+
+      '
+snowball:
+  depth: 1
+  direction: references
+  max_per_paper: 5
+llm:
+  default:
+    provider: ollama
+    base_url: http://localhost:11434
+    model: qwen2.5:3b
+    max_tokens: 700
+    timeout: 300
+categorize:
+  mode: multi
+  min_confidence: 0.4
+  categories:
+  - id: mde
+    label: Monocular Depth Estimation
+    description: Methods that predict per-pixel depth from a single RGB image.
+    subcategories:
+    - id: mde_supervised
+      label: Supervised MDE
+      description: Trained with ground-truth depth (LiDAR, RGB-D, synthetic).
+    - id: mde_self_supervised
+      label: Self-supervised MDE
+      description: Trained from monocular video or stereo pairs via photometric reconstruction, no GT
+        depth.
+    - id: mde_metric
+      label: Metric / zero-shot metric depth
+      description: Predicts absolute-scale depth, e.g. camera-intrinsics conditioning, canonical camera
+        space, metric foundation models.
+    - id: mde_relative
+      label: Relative / affine-invariant depth
+      description: Predicts depth up to scale/shift (e.g. MiDaS-style), relies on scale-shift-invariant
+        losses.
+    - id: mde_foundation
+      label: Depth foundation models
+      description: Large-scale pretrained general-purpose depth models (ViT/diffusion backbones, huge
+        mixed datasets).
+  - id: scale_recovery
+    label: Scale recovery & sensor fusion
+    description: Recovering metric scale of learned depth using external odometry, IMU, GNSS, sparse points,
+      altitude.
+  - id: mapping
+    label: Mapping & 3D reconstruction
+    description: Building maps/3D models from depth or images.
+    subcategories:
+    - id: map_fusion
+      label: Depth fusion (TSDF/voxel/surfel)
+      description: Fusing per-frame depth maps with known poses into volumetric/surfel/point maps.
+    - id: map_slam
+      label: Monocular SLAM / VO with learned depth
+      description: SLAM or visual odometry systems that use learned depth priors.
+    - id: map_neural
+      label: Neural scene representations
+      description: NeRF / 3D Gaussian splatting / implicit mapping.
+  - id: uav
+    label: UAV / aerial
+    description: Work specifically on drone or aerial imagery, platforms or applications.
+  - id: datasets
+    label: Datasets & benchmarks
+    description: Papers introducing datasets, benchmarks or evaluation protocols for depth or mapping.
+  - id: survey
+    label: Survey / review
+    description: Survey or review articles.
+relations:
+  labels:
+  - relation_label: uses_component
+    label: Uses component
+    description: Citing paper directly reuses a concrete part of the cited paper — network/encoder/backbone,
+      module, loss, pretrained weights or code.
+  - relation_label: builds_on_idea
+    label: Builds on idea
+    description: Citing paper adapts or extends the cited paper's core idea/method, but with its own implementation.
+  - relation_label: compares_against
+    label: Compares against
+    description: Cited paper is used as a baseline or competitor in experiments.
+  - relation_label: dataset_or_benchmark
+    label: Uses dataset/benchmark
+    description: Citing paper uses a dataset, split, metric or evaluation protocol introduced by the cited
+      paper.
+  - relation_label: background
+    label: Background mention
+    description: Cited only as related work or an example; no technical dependency.
+fill_missing:
+  enabled: true
+  allow_pdf: false
+  allow_llm: true
+  fields:
+  - abstract
+  - year
+  - venue
+  - authors
+update:
+  overlap_days: 3
+  track_citations_of_core: true
+  core_min_relevance: 0.9
+  default_since_days: 30
+export:
+  inbox_days: 14
+  canvas_categories: []
