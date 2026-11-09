@@ -38,7 +38,7 @@ No linter/formatter configured. `AUTOREF_CONFIG` env var replaces `-c`.
   therefore triggers recategorization/relabeling of everything.
 - **Sources (`sources/`)**: subclass `PaperSource`; declare `capabilities` (search, get, references, citations,
   contexts, …), return source-agnostic `PaperRecord`/`ReferenceRecord` (`models.py`); register in
-  `sources/registry.py`. Base class handles politeness delay + tenacity retry; `SourceSet` disables a source after
+  `sources/registry.py`. Base class (`_get`) handles politeness delay (adaptive: doubles after 429, decays on success) and its own retry loop (exponential backoff + jitter, honors `Retry-After`); `SourceSet` disables a source after
   repeated failures (circuit breaker).
 - **LLMs (`llm/`)**: subclass `LLMClient`, implement only `_chat(system, user, *, json_schema=None)`, register in
   `llm/registry.py` (`PROVIDERS`, clients cached in `_cache`). `complete_json` does shared JSON extraction

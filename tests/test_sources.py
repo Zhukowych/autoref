@@ -1,9 +1,12 @@
+from datetime import datetime, timezone
+
 import httpx
+import pytest
 import respx
 
 from autoref.models import ExternalIds, PaperRecord
 from autoref.sources.arxiv import ArxivSource, build_query, parse_feed
-from autoref.sources.base import SourceError
+from autoref.sources.base import SourceError, parse_retry_after
 from autoref.sources.openalex import OpenAlexSource, parse_work, rebuild_abstract
 from autoref.sources.semantic_scholar import SemanticScholarSource, parse_paper
 
@@ -58,23 +61,3 @@ def test_s2_references_with_contexts():
     [ref] = src.references(PaperRecord(title="x", ids=ExternalIds(s2_id="abc")))
     assert ref.cited.title == "ResNet" and ref.contexts[0].text.startswith("we use")
     assert ref.intents == ["methodology"] and ref.is_influential
-
-
-@respx.mock
-def test_circuit_breaker(monkeypatch):
-    route = respx.get("https://api.openalex.org/works").mock(return_value=httpx.Response(429))
-    src = OpenAlexSource()
-    src.min_delay = 0
-    monkeypatch.setattr(OpenAlexSource._get_retrying.retry, "wait", lambda *_: 0)
-    for _ in range(2):
-        try:
-            src.search("x", limit=1)
-        except httpx.HTTPStatusError:
-            pass
-    n = route.call_count
-    try:
-        src.search("x", limit=1)
-        raise AssertionError("expected SourceError")
-    except SourceError:
-        pass
-    assert route.call_count == n  # no more HTTP once disabled

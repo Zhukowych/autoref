@@ -23,7 +23,11 @@ Keys (all optional, via env or the config):
 | `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` | API LLMs |
 
 Without S2, references come from OpenAlex (no citation sentences — relation labeling then relies on abstracts).
-A source that keeps failing (e.g. 429) is switched off for the rest of the run after 2 failed requests.
+Requests are spaced by a per-source politeness delay (S2 1.0–1.1 s, OpenAlex 0.15 s, arXiv 3.1 s). On HTTP 429/5xx or
+network errors a request is retried up to 5 times with exponential backoff (2, 4, 8, 16, 32 s, capped at 60 s, random
+jitter) and never earlier than the server's `Retry-After`; if the server asks for more than 300 s, that request
+is abandoned. After a 429 the spacing between requests doubles (up to 8×) and shrinks again after 20 successes.
+A source whose requests fail 2 times in a row (all retries used up) is switched off for the rest of the run.
 
 ## Quick start
 
