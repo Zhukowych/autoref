@@ -121,6 +121,13 @@ def run_snowball(ctx: Ctx, *, depth: int | None = None, direction: str | None = 
     direction = direction or sc.direction
     max_per_paper = max_per_paper or sc.max_per_paper
     summary = {"expanded": 0, "candidates": 0, "included": 0}
+    # resume: candidates promoted by an interrupted run were never scored -> score them now
+    with session(ctx) as s:
+        leftover = list(s.scalars(select(TopicPaper.paper_id).where(
+            TopicPaper.topic == ctx.topic, TopicPaper.status == "candidate")))
+    if leftover:
+        summary["included"] += apply_filter(ctx, leftover)["included"]
+        promote_included(ctx, set(leftover))
     current = set(paper_ids) if paper_ids is not None else None
     for level in range(depth):
         with session(ctx) as s:

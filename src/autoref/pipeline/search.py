@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 
 from ..db import repo
-from ..db.schema import Paper, TopicPaper
+from ..db.schema import Paper, SyncRun, TopicPaper
 from ..llm import FailureGuard, LLMError, llm_for
 from .context import Ctx, log, render, session, short
 
@@ -23,7 +23,10 @@ class SearchStats:
 
 def run_search(ctx: Ctx, *, source: str | None = None, queries: list[str] | None = None,
                limit: int | None = None, date_from: date | None = None, date_to: date | None = None,
-               origin: str = "search", run_id: int | None = None) -> SearchStats:
+               origin: str = "search", run_id: int | None = None,
+               skip: set[tuple[str, str]] | None = None) -> SearchStats:
+    """`skip` = (source, query) pairs already finished by an interrupted earlier run. Every finished
+    pair is checkpointed into the SyncRun's details["done"] so the next run can skip it."""
     cfg = ctx.cfg.search
     queries = queries or cfg.queries
     limit = limit or cfg.limit_per_query
@@ -35,6 +38,11 @@ def run_search(ctx: Ctx, *, source: str | None = None, queries: list[str] | None
         task = prog.add_task("search", total=len(srcs) * len(queries))
         for src in srcs:
             for q in queries:
+                if skip and (src.name, q) in skip:
+                    stats.rows.append({"source": src.name, "query": q, "found": 0, "new": 0, "merged": 0,
+                                       "error": "skipped: done in interrupted run"})
+                    prog.advance(task)
+                    continue
                 prog.update(task, description=f"{src.name}: {q[:40]}")
                 row = {"source": src.name, "query": q, "found": 0, "new": 0, "merged": 0}
                 try:
@@ -56,6 +64,9 @@ def run_search(ctx: Ctx, *, source: str | None = None, queries: list[str] | None
                         row["new" if created else "merged"] += 1
                         if new_member:
                             stats.new_paper_ids.add(p.id)
+                    if run_id is not None and "error" not in row:  # checkpoint in the same transaction
+                        r = s.get(SyncRun, run_id)
+                        r.details = {**(r.details or {}), "done": [*(r.details or {}).get("done", []), [src.name, q]]}
                 stats.rows.append(row)
                 prog.advance(task)
     return stats

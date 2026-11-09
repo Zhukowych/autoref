@@ -59,6 +59,11 @@ Most writing commands accept `--dry-run`. `-v` before the command enables debug 
 - `export obsidian [--vault PATH] [--force] [--canvas CATEGORY_ID]...` — write/refresh the vault (only changed notes are rewritten).
 - `run [--no-export]` — the whole pipeline.
 
+**Interruptions (Ctrl+C, crash, network loss)** — just run the same command again.
+Each query / paper / edge is committed as soon as it is done. `run`, `search` and `update` checkpoint finished
+source×query pairs and skip them on the next run (`--restart` ignores the checkpoint); unscored candidates and
+included-but-unexpanded papers are picked up automatically; an interrupted `update` keeps its date window.
+
 **Re-running after everything is downloaded**
 - *Better category tree:* edit `categorize.categories` and run `autoref categorize`. Each tree has a scheme id
   (hash of tree + mode, or your own `categorize.scheme: v2`); papers categorized under another scheme are

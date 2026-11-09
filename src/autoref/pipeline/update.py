@@ -7,7 +7,7 @@ from datetime import date, datetime, timedelta
 
 from sqlalchemy import or_, select
 
-from ..db.schema import SyncRun, TopicPaper, utcnow
+from ..db.schema import Paper, SyncRun, TopicPaper, utcnow
 from .categorize import run_categorize
 from .context import Ctx, log, session
 from .enrich import run_enrich
@@ -35,10 +35,11 @@ def topic_lock(ctx: Ctx):
             fcntl.flock(fh, fcntl.LOCK_UN)
 
 
-def start_run(ctx: Ctx, kind: str, window_from: date | None = None, window_to: date | None = None) -> int:
+def start_run(ctx: Ctx, kind: str, window_from: date | None = None, window_to: date | None = None,
+              details: dict | None = None) -> int:
     with session(ctx) as s:
         r = SyncRun(topic=ctx.topic, kind=kind, window_from=window_from.isoformat() if window_from else None,
-                    window_to=window_to.isoformat() if window_to else None)
+                    window_to=window_to.isoformat() if window_to else None, details=details or {})
         s.add(r)
         s.flush()
         return r.id
@@ -48,8 +49,22 @@ def finish_run(ctx: Ctx, run_id: int, *, status: str, n_new: int = 0, details: d
                error: str | None = None):
     with session(ctx) as s:
         r = s.get(SyncRun, run_id)
-        r.status, r.n_new, r.details, r.error = status, n_new, details or {}, error
+        merged = {**(r.details or {}), **(details or {})}  # keep "done" checkpoints
+        r.status, r.n_new, r.details, r.error = status, n_new, merged, error
         r.finished_at = utcnow()
+
+
+def resume_point(ctx: Ctx, kind: str, window_to: date | None = None) -> list:
+    """(source, query) pairs finished by the latest run of `kind` if that run was interrupted
+    (failed/running). For updates the window must match, otherwise nothing is skipped."""
+    with session(ctx) as s:
+        r = s.scalar(select(SyncRun).where(SyncRun.topic == ctx.topic, SyncRun.kind == kind)
+                     .order_by(SyncRun.id.desc()).limit(1))
+        if r is None or r.status not in ("failed", "running"):
+            return []
+        if window_to is not None and r.window_to != window_to.isoformat():
+            return []
+        return [list(x) for x in (r.details or {}).get("done", [])]
 
 
 def last_success(ctx: Ctx, s) -> SyncRun | None:
@@ -80,9 +95,19 @@ def core_paper_ids(ctx: Ctx, s) -> list[int]:
 def process_new(ctx: Ctx, new_ids: set[int], run_id: int | None) -> dict:
     """Gate + enrich + snowball + categorize + relate only for `new_ids` (and their new neighbours)."""
     out: dict = {}
+    sc = ctx.cfg.snowball
     with session(ctx) as s:  # leftovers from an interrupted earlier run
         new_ids = set(new_ids) | set(s.scalars(select(TopicPaper.paper_id).where(
             TopicPaper.topic == ctx.topic, TopicPaper.status == "candidate")))
+        # included earlier but never expanded (run stopped before snowball)
+        not_fetched = []
+        if sc.direction in ("references", "both"):
+            not_fetched.append(Paper.refs_fetched_at.is_(None))
+        if sc.direction in ("citations", "both"):
+            not_fetched.append(Paper.cites_fetched_at.is_(None))
+        new_ids |= set(s.scalars(select(TopicPaper.paper_id).join(Paper, Paper.id == TopicPaper.paper_id).where(
+            TopicPaper.topic == ctx.topic, TopicPaper.status == "included", TopicPaper.depth < sc.depth,
+            or_(*not_fetched))))
     out["filter"] = apply_filter(ctx, list(new_ids))
     promote_included(ctx, new_ids)
     out["snowball"] = run_snowball(ctx, paper_ids=list(new_ids), origin="snowball", run_id=run_id)
@@ -92,13 +117,16 @@ def process_new(ctx: Ctx, new_ids: set[int], run_id: int | None) -> dict:
     return out
 
 
-def run_update(ctx: Ctx, *, since: date | None = None, export: bool = True) -> dict:
+def run_update(ctx: Ctx, *, since: date | None = None, export: bool = True, restart: bool = False) -> dict:
     with topic_lock(ctx):
         lo, hi = compute_window(ctx, since)
-        run_id = start_run(ctx, "update", lo, hi)
+        done = resume_point(ctx, "update", window_to=hi) if since is None and not restart else []
+        run_id = start_run(ctx, "update", lo, hi, details={"done": done})
         try:
-            ctx.console.print(f"[bold]update window[/] {lo} → {hi}")
-            stats = run_search(ctx, date_from=lo, date_to=hi, origin="update", run_id=run_id)
+            ctx.console.print(f"[bold]update window[/] {lo} → {hi}"
+                              + (f" (resuming, {len(done)} queries already done)" if done else ""))
+            stats = run_search(ctx, date_from=lo, date_to=hi, origin="update", run_id=run_id,
+                               skip={tuple(x) for x in done})
             new_ids = set(stats.new_paper_ids)
             n_cit = 0
             if ctx.cfg.update.track_citations_of_core:
@@ -130,13 +158,16 @@ def run_update(ctx: Ctx, *, since: date | None = None, export: bool = True) -> d
             raise
 
 
-def run_all(ctx: Ctx, *, export: bool = True) -> dict:
+def run_all(ctx: Ctx, *, export: bool = True, restart: bool = False) -> dict:
     """Full pipeline: search → filter → snowball → enrich → categorize → relate → export."""
     with topic_lock(ctx):
-        run_id = start_run(ctx, "search")
+        done = [] if restart else resume_point(ctx, "search")
+        run_id = start_run(ctx, "search", details={"done": done})
         try:
             out: dict = {}
-            st = run_search(ctx, run_id=run_id)
+            if done:
+                ctx.console.print(f"[bold]resuming[/]: {len(done)} source/query pairs already done")
+            st = run_search(ctx, run_id=run_id, skip={tuple(x) for x in done})
             out["search"] = {"rows": st.rows, "new": len(st.new_paper_ids), "errors": st.errors}
             out["filter"] = apply_filter(ctx)
             out["snowball"] = run_snowball(ctx)
@@ -147,7 +178,8 @@ def run_all(ctx: Ctx, *, export: bool = True) -> dict:
                 from ..obsidian import export_vault
                 out["export"] = export_vault(ctx)
             status = "partial" if st.errors else "ok"
-            finish_run(ctx, run_id, status=status, n_new=len(st.new_paper_ids), details={"errors": st.errors})
+            finish_run(ctx, run_id, status=status, n_new=len(st.new_paper_ids), details={"errors": st.errors},
+                       error="; ".join(st.errors)[:2000] or None)
             return out
         except BaseException as e:
             finish_run(ctx, run_id, status="failed", error=f"{type(e).__name__}: {e}")

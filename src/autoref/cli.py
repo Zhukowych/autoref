@@ -32,6 +32,7 @@ console = Console()
 ConfigOpt = Annotated[Path, typer.Option("--config", "-c", envvar="AUTOREF_CONFIG", exists=True, dir_okay=False,
                                          help="Topic config YAML (or env AUTOREF_CONFIG).")]
 DryRun = Annotated[bool, typer.Option("--dry-run", help="Do everything but do not commit DB changes.")]
+Restart = Annotated[bool, typer.Option("--restart", help="Ignore checkpoints of an interrupted run; search everything again.")]
 
 
 @app.callback()
@@ -153,14 +154,19 @@ def search(config: ConfigOpt,
            query: Annotated[Optional[list[str]], typer.Option(help="Override config queries (repeatable).")] = None,
            limit: Annotated[Optional[int], typer.Option(help="Results per query.")] = None,
            no_filter: Annotated[bool, typer.Option("--no-filter", help="Skip relevance gate.")] = False,
-           dry_run: DryRun = False):
+           restart: Restart = False, dry_run: DryRun = False):
     """Run config queries on sources, dedup/merge into DB, then apply the relevance gate."""
     from .pipeline.search import apply_filter, run_search
-    from .pipeline.update import finish_run, start_run
+    from .pipeline.update import finish_run, resume_point, start_run
     ctx = _ctx(config, dry_run)
-    run_id = start_run(ctx, "search") if not (source or query or dry_run) else None
+    full = not (source or query or dry_run)  # only full searches are checkpointed/resumed
+    done = resume_point(ctx, "search") if full and not restart else []
+    run_id = start_run(ctx, "search", details={"done": done}) if full else None
+    if done:
+        console.print(f"[bold]resuming[/]: {len(done)} source/query pairs already done")
     try:
-        st = run_search(ctx, source=source, queries=query, limit=limit, run_id=run_id)
+        st = run_search(ctx, source=source, queries=query, limit=limit, run_id=run_id,
+                        skip={tuple(x) for x in done})
     except BaseException as e:
         if run_id:
             finish_run(ctx, run_id, status="failed", error=str(e))
@@ -259,11 +265,12 @@ def export_obsidian(config: ConfigOpt,
 
 
 @app.command()
-def run(config: ConfigOpt, no_export: Annotated[bool, typer.Option("--no-export")] = False):
+def run(config: ConfigOpt, no_export: Annotated[bool, typer.Option("--no-export")] = False,
+        restart: Restart = False):
     """Full pipeline: search → filter → snowball → enrich → categorize → relate → export. Resumable."""
     from .pipeline.update import run_all
     ctx = _ctx(config)
-    out = run_all(ctx, export=not no_export)
+    out = run_all(ctx, export=not no_export, restart=restart)
     console.print(_search_table(out.pop("search")["rows"]))
     for k, v in out.items():
         console.print(_dict_table(k, v))
@@ -274,12 +281,13 @@ def run(config: ConfigOpt, no_export: Annotated[bool, typer.Option("--no-export"
 @app.command()
 def update(config: ConfigOpt,
            since: Annotated[Optional[str], typer.Option(help="YYYY-MM-DD; default = last successful run - overlap")] = None,
-           no_export: Annotated[bool, typer.Option("--no-export")] = False):
+           no_export: Annotated[bool, typer.Option("--no-export")] = False, restart: Restart = False):
     """Incremental: fetch papers published since the last run (+ new citations of core papers)."""
     from .pipeline.update import LockedError, run_update
     ctx = _ctx(config)
     try:
-        out = run_update(ctx, since=date.fromisoformat(since) if since else None, export=not no_export)
+        out = run_update(ctx, since=date.fromisoformat(since) if since else None, export=not no_export,
+                         restart=restart)
     except LockedError as e:
         console.print(f"[yellow]{e}[/]")
         raise typer.Exit(2)
