@@ -2,11 +2,13 @@
 name: test_local
 db: data/test_local.sqlite
 vault: vault/test_local
+# no Semantic Scholar here: works without an API key
 sources:
-- openalex
-- arxiv
-source_settings:
-  openalex_mailto: ${OPENALEX_MAILTO:-}
+  openalex:
+    mailto: ${OPENALEX_MAILTO:-}
+    max_rate: 6
+  arxiv:
+    max_rate: 0.32
 search:
   queries:
   - self-supervised monocular depth estimation

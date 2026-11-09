@@ -51,7 +51,8 @@ class PaperSource(ABC):
 
     name: str = "base"
     capabilities: frozenset[str] = frozenset()  # search, get, references, citations, contexts, abstract, pdf, date_window
-    min_delay: float = 1.0  # seconds between requests (politeness floor)
+    min_delay: float = 1.0  # default seconds between requests (politeness floor)
+    rate_limit: float | None = None  # documented max requests/second; `max_rate` above it logs a warning
 
     # --- retry / backoff policy -------------------------------------------------------------
     max_attempts = 6            # 1 try + 5 retries
@@ -63,9 +64,13 @@ class PaperSource(ABC):
     max_consecutive_failures = 2  # circuit breaker: requests that exhausted all retries, in a row
 
     def __init__(self, settings=None, client: httpx.Client | None = None):
-        self.settings = settings
-        if settings is not None and getattr(settings, "request_delay", None) is not None:
-            self.min_delay = settings.request_delay
+        self.settings = settings  # SourceConfig | None
+        max_rate = getattr(settings, "max_rate", None)
+        if max_rate:  # user-configured maximum rate (requests per second)
+            self.min_delay = 1.0 / max_rate
+            if self.rate_limit and max_rate > self.rate_limit * 1.001:
+                log.warning("%s: max_rate %.2f req/s is above the documented limit of %.2f req/s",
+                            self.name, max_rate, self.rate_limit)
         self._client = client or httpx.Client(timeout=60.0, follow_redirects=True,
                                               headers={"User-Agent": USER_AGENT})
         self._last = 0.0

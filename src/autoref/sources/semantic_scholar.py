@@ -62,14 +62,15 @@ class SemanticScholarSource(PaperSource):
     name = "semantic_scholar"
     capabilities = frozenset({"search", "get", "references", "citations", "contexts", "abstract",
                               "pdf", "date_window"})
-    min_delay = 1.1
+    min_delay = 1.1  # without API key (shared pool); with key and no max_rate: 1.0
+    rate_limit = 1.0
 
     def __init__(self, settings=None, client=None):
         super().__init__(settings, client)
-        key = getattr(settings, "semantic_scholar_api_key", None) if settings else None
+        key = getattr(settings, "api_key", None)
         self._headers = {"x-api-key": key} if key else None
-        if key and (settings is None or settings.request_delay is None):
-            self.min_delay = 1.0
+        if key and not getattr(settings, "max_rate", None):
+            self.min_delay = self._delay = 1.0
 
     def search(self, query, limit=100, year_from=None, year_to=None, date_from=None, date_to=None):
         params: dict = {"query": query, "fields": PAPER_FIELDS}

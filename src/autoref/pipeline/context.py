@@ -36,7 +36,7 @@ class Ctx:
     @property
     def sources(self) -> SourceSet:
         if self._sources is None:
-            self._sources = SourceSet(self.cfg.sources, self.cfg.source_settings)
+            self._sources = SourceSet(self.cfg.sources)
         return self._sources
 
     def close(self):

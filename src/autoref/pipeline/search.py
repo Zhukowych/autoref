@@ -32,7 +32,7 @@ def run_search(ctx: Ctx, *, source: str | None = None, queries: list[str] | None
     limit = limit or cfg.limit_per_query
     srcs = [ctx.sources.get(source)] if source else ctx.sources.with_cap("search")
     if source and srcs[0] is None:
-        raise ValueError(f"source {source!r} not in config sources {ctx.cfg.sources}")
+        raise ValueError(f"source {source!r} not enabled in config (sources: {", ".join(ctx.cfg.enabled_sources)})")
     stats = SearchStats()
     with ctx.progress() as prog:
         task = prog.add_task("search", total=len(srcs) * len(queries))

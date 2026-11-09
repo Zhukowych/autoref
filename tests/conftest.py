@@ -52,7 +52,7 @@ def cfg_path(tmp_path):
     raw["db"] = str(tmp_path / "t.sqlite")
     raw["vault"] = str(tmp_path / "vault")
     raw["llm"] = {"default": {"provider": "fake", "model": "m"}}
-    raw["sources"] = ["openalex"]
+    raw["sources"] = {"openalex": {"max_rate": 1000}}
     p = tmp_path / "configs" / "t.yaml"
     p.parent.mkdir()
     p.write_text(yaml.safe_dump(raw))

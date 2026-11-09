@@ -24,8 +24,12 @@ def make_source(name: str, settings=None) -> PaperSource:
 class SourceSet:
     """Ordered collection of configured sources (priority = config order)."""
 
-    def __init__(self, names: list[str], settings=None):
-        self.sources = [make_source(n, settings) for n in names]
+    def __init__(self, sources, settings=None):
+        """`sources`: mapping name -> SourceConfig (disabled ones are skipped) or a list of names."""
+        if isinstance(sources, dict):
+            self.sources = [make_source(n, c) for n, c in sources.items() if getattr(c, "enabled", True)]
+        else:
+            self.sources = [make_source(n, settings) for n in sources]
 
     def __iter__(self):
         return iter(self.sources)

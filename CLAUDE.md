@@ -31,7 +31,9 @@ No linter/formatter configured. `AUTOREF_CONFIG` env var replaces `-c`.
   `prompts/<name>.txt` split on `=== SYSTEM ===` / `=== USER ===`, `string.Template` `$vars`; a project-level
   `<base_dir>/prompts/<name>.txt` overrides the packaged one.
 - **Config (`config.py`)**: pydantic models, `${VAR}` / `${VAR:-default}` env expansion. `base_dir` = parent of
-  `configs/` (relative `db`/`vault` resolve against it). LLM config is per task (`categorize`, `relations`, `fill`,
+  `configs/` (relative `db`/`vault` resolve against it). `sources:` is an ordered mapping name → `SourceConfig`
+  (`enabled`, `api_key`, `mailto`, `max_rate` req/s, `categories`); order = priority; legacy list +
+  `source_settings` is converted by a before-validator. `cfg.enabled_sources` lists active names. LLM config is per task (`categorize`, `relations`, `fill`,
   `relevance`) falling back to `default`.
 - **Scheme ids**: `categorize.scheme_id` / `relations.scheme_id` = explicit `scheme` or hash of the tree/labels.
   Rows stamped with a different scheme are "stale" and reprocessed on next run. Changing the hashed inputs

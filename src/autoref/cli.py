@@ -130,12 +130,12 @@ def sources_test(config: ConfigOpt, query: str = "monocular depth estimation"):
     """Query each configured source once; show results count, capabilities and API-key status."""
     cfg = load_config(config)
     from .sources import SourceSet
-    t = Table(title="sources")
-    for col in ("source", "capabilities", "api key", "result", "time"):
+    t = Table(title="sources (priority order)")
+    for col in ("source", "capabilities", "key/e-mail", "max rate", "result", "time"):
         t.add_column(col)
-    for src in SourceSet(cfg.sources, cfg.source_settings):
-        key = {"semantic_scholar": bool(cfg.source_settings.semantic_scholar_api_key),
-               "openalex": bool(cfg.source_settings.openalex_mailto)}.get(src.name)
+    for src in SourceSet(cfg.sources):
+        sc = cfg.sources[src.name]
+        key = {"semantic_scholar": bool(sc.api_key), "openalex": bool(sc.mailto)}.get(src.name)
         t0 = time.time()
         try:
             res = src.search(query, limit=3)
@@ -143,7 +143,7 @@ def sources_test(config: ConfigOpt, query: str = "monocular depth estimation"):
         except Exception as e:
             r = f"[red]{type(e).__name__}: {str(e)[:60]}[/]"
         t.add_row(src.name, ", ".join(sorted(src.capabilities)), "n/a" if key is None else ("yes" if key else "no"),
-                  r, f"{time.time() - t0:.1f}s")
+                  f"{1 / src.min_delay:.2f}/s", r, f"{time.time() - t0:.1f}s")
     console.print(t)
 
 

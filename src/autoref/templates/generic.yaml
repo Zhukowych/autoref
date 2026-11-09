@@ -3,10 +3,20 @@ name: __TOPIC__
 db: data/__TOPIC__.sqlite
 vault: vault/__TOPIC__
 
-sources: [semantic_scholar, openalex, arxiv]
-source_settings:
-  semantic_scholar_api_key: ${S2_API_KEY:-}
-  openalex_mailto: ${OPENALEX_MAILTO:-}
+# Sources in priority order: for references/citations/lookups the first source that returns data wins.
+# Per source: enabled (default true), api_key / mailto where applicable, and
+# max_rate = maximum requests per second (omit for the safe default; values above the
+# documented limit log a warning). Alias names: s2 = semantic_scholar, oa = openalex.
+sources:
+  semantic_scholar:
+    api_key: ${S2_API_KEY:-}      # optional but strongly recommended (free on request)
+    max_rate: 1.0                 # documented limit with a key: 1 request/second
+  openalex:
+    mailto: ${OPENALEX_MAILTO:-}  # optional e-mail for OpenAlex's "polite pool"
+    max_rate: 6                   # documented limit: 10 requests/second
+  arxiv:
+    max_rate: 0.32                # arXiv asks for at most 1 request per 3 seconds
+    # categories: [cs.CV, cs.RO]  # optional: restrict search to these arXiv categories
 
 search:
   queries:

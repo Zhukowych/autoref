@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 _ENV_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
 
@@ -164,18 +164,52 @@ class ExportConfig(BaseModel):
     canvas_categories: list[str] = Field(default_factory=list)  # category ids exported as .canvas
 
 
-class SourceSettings(BaseModel):
-    semantic_scholar_api_key: str | None = None
-    openalex_mailto: str | None = None
-    request_delay: float | None = None  # override per-source politeness delay
+class SourceConfig(BaseModel):
+    """Settings of one paper source (key under `sources:` is the source name)."""
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = True
+    api_key: str | None = None      # Semantic Scholar
+    mailto: str | None = None       # OpenAlex "polite pool" e-mail
+    max_rate: float | None = Field(default=None, gt=0)  # max requests per second; None = safe default
+    categories: list[str] | None = None  # arXiv: restrict search to these categories
+
+    @field_validator("api_key", "mailto", mode="before")
+    @classmethod
+    def _empty_is_none(cls, v):  # `${S2_API_KEY:-}` expands to "" when the variable is unset
+        return v or None
+
+
+DEFAULT_SOURCES = ("semantic_scholar", "openalex", "arxiv")
+
+
+def normalize_sources(value) -> dict:
+    """Accept `sources:` as mapping (preferred) or legacy list of names; canonicalize aliases (s2, oa)
+    and validate names. Order is preserved: it is the source priority."""
+    from .sources.registry import ALIASES, SOURCES
+    if value is None:
+        value = list(DEFAULT_SOURCES)
+    if isinstance(value, (list, tuple)):
+        value = {name: None for name in value}
+    if not isinstance(value, dict):
+        raise ValueError("`sources` must be a mapping of source name -> settings")
+    out: dict = {}
+    for name, body in value.items():
+        key = ALIASES.get(name, name)
+        if key not in SOURCES:
+            raise ValueError(f"unknown source {name!r}; available: {', '.join(SOURCES)} (aliases: {', '.join(ALIASES)})")
+        if key in out:
+            raise ValueError(f"source {key!r} listed twice")
+        out[key] = body if body is not None else {}
+    return out
 
 
 class TopicConfig(BaseModel):
     name: str
     db: str
     vault: str
-    sources: list[str] = Field(default_factory=lambda: ["semantic_scholar", "openalex", "arxiv"])
-    source_settings: SourceSettings = Field(default_factory=SourceSettings)
+    # Ordered mapping: first source has the highest priority for references/citations/lookups.
+    sources: dict[str, SourceConfig] = Field(default_factory=lambda: {n: SourceConfig() for n in DEFAULT_SOURCES})
     search: SearchConfig
     snowball: SnowballConfig = Field(default_factory=SnowballConfig)
     llm: LLMSection
@@ -187,6 +221,35 @@ class TopicConfig(BaseModel):
 
     # set by loader: directory of the YAML file; relative paths resolve against it
     base_dir: Path = Field(default=Path("."), exclude=True)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _legacy_source_settings(cls, data):
+        """Old format: `sources: [names]` + `source_settings: {semantic_scholar_api_key, openalex_mailto,
+        request_delay}` -> new per-source mapping."""
+        if not isinstance(data, dict) or "source_settings" not in data:
+            return data
+        data = dict(data)
+        legacy = data.pop("source_settings") or {}
+        srcs = {k: dict(v or {}) for k, v in normalize_sources(data.get("sources")).items()}
+        if legacy.get("semantic_scholar_api_key") and "semantic_scholar" in srcs:
+            srcs["semantic_scholar"].setdefault("api_key", legacy["semantic_scholar_api_key"])
+        if legacy.get("openalex_mailto") and "openalex" in srcs:
+            srcs["openalex"].setdefault("mailto", legacy["openalex_mailto"])
+        if legacy.get("request_delay"):
+            for body in srcs.values():
+                body.setdefault("max_rate", 1.0 / float(legacy["request_delay"]))
+        data["sources"] = srcs
+        return data
+
+    @field_validator("sources", mode="before")
+    @classmethod
+    def _normalize_sources(cls, v):
+        return normalize_sources(v)
+
+    @property
+    def enabled_sources(self) -> list[str]:
+        return [name for name, sc in self.sources.items() if sc.enabled]
 
     @property
     def db_path(self) -> Path:

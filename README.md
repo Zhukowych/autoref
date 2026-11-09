@@ -23,7 +23,26 @@ Keys (all optional, via env or the config):
 | `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` | API LLMs |
 
 Without S2, references come from OpenAlex (no citation sentences — relation labeling then relies on abstracts).
-Requests are spaced by a per-source politeness delay (S2 1.0–1.1 s, OpenAlex 0.15 s, arXiv 3.1 s). On HTTP 429/5xx or
+Sources are configured as an ordered mapping (first = highest priority for references/citations/lookups):
+
+```yaml
+sources:
+  semantic_scholar:            # alias: s2
+    api_key: ${S2_API_KEY:-}
+    max_rate: 1.0              # max requests per second
+  openalex:                    # alias: oa
+    mailto: ${OPENALEX_MAILTO:-}
+    max_rate: 6
+  arxiv:
+    max_rate: 0.32
+    # categories: [cs.CV, cs.RO]   # optional arXiv category filter
+    # enabled: false               # keep the entry but skip the source
+```
+
+`max_rate` is the maximum number of requests per second for that source (spacing = 1/max_rate; shared by all
+calls of the process). Without it the built-in defaults apply: S2 1.0 req/s with a key (about 0.9 without), OpenAlex
+~6.7, arXiv ~0.32. A value above the source's documented limit (S2 1, OpenAlex 10, arXiv 1 per 3 s) logs a warning.
+The old format (`sources: [names]` plus `source_settings:`) still loads. Requests are spaced as above. On HTTP 429/5xx or
 network errors a request is retried up to 5 times with exponential backoff (2, 4, 8, 16, 32 s, capped at 60 s, random
 jitter) and never earlier than the server's `Retry-After`; if the server asks for more than 300 s, that request
 is abandoned. After a 429 the spacing between requests doubles (up to 8×) and shrinks again after 20 successes.
@@ -51,7 +70,7 @@ Most writing commands accept `--dry-run`. `-v` before the command enables debug 
 **Setup**
 - `init <topic> [--from-template mde|generic]` — write `configs/<topic>.yaml` and create the empty DB.
 - `llm test [--task categorize|relations|fill|relevance]` — tiny text + JSON request to each configured backend; shows latency and whether JSON output works.
-- `sources test [--query ...]` — one search per source; shows capabilities and API-key status.
+- `sources test [--query ...]` — one search per source; shows capabilities, API-key/e-mail status and the effective max rate.
 
 **Pipeline**
 - `search [--source s2] [--query "..."]... [--limit N] [--no-filter]` — run queries on sources, normalize, dedup (DOI → arXiv id → S2/OpenAlex id → normalized title+year), merge fields from several sources, add to topic; then relevance gate (`search.filter`: `none` / `keywords` / `llm`). Excluded papers are kept (marked) so they aren't fetched again.

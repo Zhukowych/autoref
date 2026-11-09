@@ -55,8 +55,13 @@ class ArxivSource(PaperSource):
     name = "arxiv"
     capabilities = frozenset({"search", "get", "abstract", "pdf", "date_window"})
     min_delay = 3.1  # arXiv asks for >= 3 s between calls
+    rate_limit = 1 / 3.0
 
-    categories: list[str] = ["cs.CV", "cs.RO", "cs.LG", "cs.AI", "eess.IV"]
+    default_categories = ["cs.CV", "cs.RO", "cs.LG", "cs.AI", "eess.IV"]
+
+    def __init__(self, settings=None, client=None):
+        super().__init__(settings, client)
+        self.categories = list(getattr(settings, "categories", None) or self.default_categories)
 
     def search(self, query, limit=100, year_from=None, year_to=None, date_from=None, date_to=None):
         q = build_query(query, self.categories)

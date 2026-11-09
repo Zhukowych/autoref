@@ -65,10 +65,11 @@ class OpenAlexSource(PaperSource):
     name = "openalex"
     capabilities = frozenset({"search", "get", "references", "citations", "abstract", "pdf", "date_window"})
     min_delay = 0.15
+    rate_limit = 10.0  # documented: 10 requests/second (check current OpenAlex docs)
 
     def __init__(self, settings=None, client=None):
         super().__init__(settings, client)
-        self._mailto = getattr(settings, "openalex_mailto", None) if settings else None
+        self._mailto = getattr(settings, "mailto", None) if settings else None
 
     def _params(self, **kw) -> dict:
         p = {k: v for k, v in kw.items() if v is not None}
