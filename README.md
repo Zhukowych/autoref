@@ -17,7 +17,7 @@ source .venv/bin/activate          # or call .venv/bin/autoref
 ## Quick start
 
 ```bash
-autoref init mde_uav --from-template mde        # -> configs/mde_uav.yaml (thesis example)
+autoref init mde_uav --from-template uav_metric # -> configs/mde_uav.yaml (thesis example)
 $EDITOR configs/mde_uav.yaml                   # queries, categories, relation labels, LLMs
 autoref llm test -c configs/mde_uav.yaml        # check LLM backends
 autoref sources test -c configs/mde_uav.yaml    # check sources
@@ -56,10 +56,29 @@ mkdir -p ~/llm && cd ~/llm
 python3 -m venv vllm-env
 source vllm-env/bin/activate
 pip install --upgrade pip uv
-uv pip install vllm --torch-backend=auto
-python -c "import vllm; print(vllm.__version__)"
+nvidia-smi | grep "CUDA Version"   # pick the install line that matches
+```
+
+The default vLLM wheel is built for CUDA 13. Install the variant that matches the driver's "CUDA Version":
+
+```bash
+# driver CUDA 13.x
+uv pip install vllm --torch-backend=cu130
+
+# driver CUDA 12.9 (or newer 12.x): vLLM's CUDA 12.9 wheel index (keeps a few releases behind, hence the pin)
+uv pip install vllm==0.22.0 \
+  --extra-index-url https://wheels.vllm.ai/0.22.0/cu129 \
+  --extra-index-url https://download.pytorch.org/whl/cu129 \
+  --index-strategy unsafe-best-match
+```
+
+```bash
+python -c "import vllm, torch; print(vllm.__version__, torch.version.cuda, torch.cuda.is_available())"
 deactivate
 ```
+
+`ImportError: libcudart.so.13` when starting vLLM means the CUDA 13 wheel was installed on a CUDA 12 driver:
+delete the environment (`rm -rf ~/llm/vllm-env`) and repeat this step with the CUDA 12.9 line.
 
 ### 3. Start the model
 
@@ -239,7 +258,9 @@ then `update` periodically. Every step is idempotent — it only processes what 
 Most writing commands accept `--dry-run`. `-v` before the command enables debug logs.
 
 **Setup**
-- `init <topic> [--from-template mde|generic]` — write `configs/<topic>.yaml` and create the empty DB.
+- `init <topic> [--from-template generic|mde|uav_metric|<path.yaml>]` — write `configs/<topic>.yaml` and create the
+  empty DB. A path copies any existing topic config; `name`, `db` and `vault` are set to the new topic.
+  `uav_metric` = the thesis setup (`configs/uav_metric_mapping.yaml`), `mde` = the older, broader MDE config.
 - `llm test [--task categorize|relations|fill|relevance]` — tiny text + JSON request to each configured backend; shows latency and whether JSON output works.
 - `sources test [--query ...]` — one search per source; shows capabilities, API-key/e-mail status and the effective max rate.
 

@@ -72,14 +72,25 @@ def _search_table(rows: list[dict]) -> Table:
 # ====================================================================== setup
 @app.command()
 def init(topic: str,
-         from_template: Annotated[str, typer.Option(help="Template: mde | generic")] = "generic",
+         from_template: Annotated[str, typer.Option(
+             help="Packaged template (generic | mde | uav_metric) or path to any topic YAML to copy.")] = "generic",
          configs_dir: Annotated[Path, typer.Option(help="Where to write the config.")] = Path("configs")):
     """Create configs/<topic>.yaml from a template and an empty SQLite DB."""
     path = configs_dir / f"{topic}.yaml"
     if path.exists():
         console.print(f"[red]{path} already exists[/]")
         raise typer.Exit(1)
-    text = resources.files("autoref.templates").joinpath(f"{from_template}.yaml").read_text(encoding="utf-8")
+    src = Path(from_template).expanduser()
+    if src.suffix in (".yaml", ".yml") and src.is_file():
+        text = src.read_text(encoding="utf-8")
+    else:
+        tpl = resources.files("autoref.templates").joinpath(f"{from_template}.yaml")
+        if not tpl.is_file():
+            names = sorted(p.name.removesuffix(".yaml") for p in resources.files("autoref.templates").iterdir()
+                           if p.name.endswith(".yaml"))
+            console.print(f"[red]no template {from_template!r}[/]; use one of {', '.join(names)} or a path to a .yaml file")
+            raise typer.Exit(1)
+        text = tpl.read_text(encoding="utf-8")
     text = text.replace("__TOPIC__", topic)
     if from_template != "generic":
         import re
