@@ -35,6 +35,10 @@ if [ $KILL = 1 ]; then tmux kill-session -t "$SESSION"; exit; fi
 CONFIG="$(realpath "$CONFIG")"
 [ -x "$ROOT/.venv/bin/autoref" ] || { echo "no $ROOT/.venv; run: python3 -m venv .venv && .venv/bin/pip install -e '.[dev]'" >&2; exit 1; }
 
+if [ $NO_LLM = 0 ] && [ -z "${LLM_CMD:-}" ] && [ ! -f "$VLLM_ENV/bin/activate" ]; then
+  echo "vLLM venv not found: $VLLM_ENV (pass -e /path/to/venv, or -n to skip the LLM)" >&2; exit 1
+fi
+
 if tmux has-session -t "$SESSION" 2>/dev/null; then
   echo "session '$SESSION' exists; attaching (use -k to kill)"
   exec tmux attach -t "$SESSION"
