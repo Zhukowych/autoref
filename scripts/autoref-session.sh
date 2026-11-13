@@ -49,7 +49,7 @@ tmux send-keys -t "$SESSION:autoref" \
 
 # window 1: llm
 if [ $NO_LLM = 0 ]; then
-  tmux new-window -t "$SESSION" -n llm -c "$ROOT"
+  tmux new-window -t "$SESSION:" -n llm -c "$ROOT"
   tmux send-keys -t "$SESSION:llm" "[ -f '$VLLM_ENV/bin/activate' ] && source '$VLLM_ENV/bin/activate'; $LLM_CMD" C-m
 fi
 
